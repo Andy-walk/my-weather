@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#172033">
+  <meta name="description" content="Personal OpenWeather dashboard">
+  <link rel="manifest" href="manifest.json">
+  <title>My Weather</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#eef2ff;background:#0d1320}
+    *{box-sizing:border-box} body{margin:0;min-height:100vh;background:linear-gradient(160deg,#172033,#0b1020 65%)}
+    .wrap{max-width:900px;margin:auto;padding:20px 16px 40px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+    h1{font-size:1.55rem;margin:0}.muted{color:#aeb8cc;font-size:.9rem}.card{background:rgba(255,255,255,.075);border:1px solid rgba(255,255,255,.09);border-radius:22px;padding:20px;margin-top:16px;backdrop-filter:blur(12px)}
+    .settings{display:grid;grid-template-columns:1fr 1fr;gap:10px}.settings input,.settings button{width:100%;padding:13px;border-radius:12px;border:1px solid #39445b;background:#111827;color:#fff;font-size:1rem}
+    button{cursor:pointer}.primary{background:#3b82f6!important;border-color:#3b82f6!important;font-weight:700}
+    .current{display:grid;grid-template-columns:1.2fr 1fr;gap:20px;align-items:center}.temp{font-size:4.6rem;font-weight:700;line-height:1}.condition{text-transform:capitalize;font-size:1.2rem;color:#dce4f7}
+    .weather-icon{width:110px;height:110px}.hero{display:flex;align-items:center;gap:10px}.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.stat{padding:13px;border-radius:14px;background:rgba(0,0,0,.16)}.stat b{display:block;font-size:1.05rem;margin-top:4px}
+    .forecast{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.day{background:rgba(0,0,0,.16);border-radius:16px;padding:12px;text-align:center}.day img{width:58px}.day .date{font-weight:700}.error{color:#ffb4b4}.hidden{display:none}
+    footer{text-align:center;margin-top:18px;color:#8793aa;font-size:.8rem}
+    @media(max-width:650px){.settings,.current{grid-template-columns:1fr}.temp{font-size:4rem}.forecast{grid-template-columns:repeat(2,1fr)}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>🌦️ My Weather</h1><div class="muted">Updates automatically every 15 minutes</div></div>
+    <button id="refreshBtn">↻ Refresh</button>
+  </div>
+
+  <section class="card">
+    <div class="settings">
+      <input id="apiKey" type="password" placeholder="OpenWeather API key">
+      <input id="city" value="London" placeholder="City, e.g. London">
+      <button class="primary" id="saveBtn">Save & Load Weather</button>
+      <button id="locationBtn">📍 Use my location</button>
+    </div>
+    <p class="muted">Your API key is saved only in this browser's local storage.</p>
+  </section>
+
+  <section id="weatherCard" class="card hidden">
+    <div class="current">
+      <div>
+        <div class="muted" id="place"></div>
+        <div class="hero"><div class="temp" id="temp">--°</div><img class="weather-icon" id="icon"></div>
+        <div class="condition" id="condition"></div>
+        <div class="muted" id="updated"></div>
+      </div>
+      <div class="stats">
+        <div class="stat">Feels like<b id="feels">--</b></div>
+        <div class="stat">Humidity<b id="humidity">--</b></div>
+        <div class="stat">Wind<b id="wind">--</b></div>
+        <div class="stat">Pressure<b id="pressure">--</b></div>
+        <div class="stat">Sunrise<b id="sunrise">--</b></div>
+        <div class="stat">Sunset<b id="sunset">--</b></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="forecastCard" class="card hidden">
+    <h2>5-day forecast</h2>
+    <div id="forecast" class="forecast"></div>
+  </section>
+
+  <section id="message" class="card muted">Enter your OpenWeather API key to begin.</section>
+  <footer>Data provided by OpenWeather</footer>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let coords=null, timer=null;
+const savedKey=localStorage.getItem("owmKey"), savedCity=localStorage.getItem("owmCity");
+if(savedKey) $("apiKey").value=savedKey;
+if(savedCity) $("city").value=savedCity;
+
+function showMsg(msg,error=false){$("message").textContent=msg;$("message").classList.remove("hidden");$("message").classList.toggle("error",error)}
+function hideMsg(){$("message").classList.add("hidden")}
+function iconUrl(icon){return `https://openweathermap.org/img/wn/${icon}@2x.png`}
+function time(ts){return new Date(ts*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}
+function day(ts){return new Date(ts*1000).toLocaleDateString([], {weekday:"short",day:"numeric",month:"short"})}
+
+async function getJSON(url){
+  const r=await fetch(url);
+  if(!r.ok){let d={};try{d=await r.json()}catch{};throw new Error(d.message||`Weather request failed (${r.status})`)}
+  return r.json();
+}
+async function loadWeather(){
+  const key=$("apiKey").value.trim();
+  if(!key){showMsg("Please enter your OpenWeather API key.",true);return}
+  localStorage.setItem("owmKey",key); localStorage.setItem("owmCity",$("city").value.trim());
+  showMsg("Loading weather…");
+  try{
+    let lat,lon;
+    if(coords){({lat,lon}=coords)}
+    else{
+      const q=encodeURIComponent($("city").value.trim()||"London");
+      const geo=await getJSON(`https://api.openweathermap.org/geo/1.0/direct?q=${q}&limit=1&appid=${key}`);
+      if(!geo.length) throw new Error("Location not found.");
+      lat=geo[0].lat;lon=geo[0].lon;
+    }
+    const base="https://api.openweathermap.org/data/2.5/";
+    const [cur,fc]=await Promise.all([
+      getJSON(`${base}weather?lat=${lat}&lon=${lon}&units=metric&appid=${key}`),
+      getJSON(`${base}forecast?lat=${lat}&lon=${lon}&units=metric&appid=${key}`)
+    ]);
+    $("place").textContent=`${cur.name}${cur.sys?.country?`, ${cur.sys.country}`:""}`;
+    $("temp").textContent=`${Math.round(cur.main.temp)}°`;
+    $("feels").textContent=`${Math.round(cur.main.feels_like)}°C`;
+    $("humidity").textContent=`${cur.main.humidity}%`;
+    $("wind").textContent=`${Math.round(cur.wind.speed*3.6)} km/h`;
+    $("pressure").textContent=`${cur.main.pressure} hPa`;
+    $("condition").textContent=cur.weather[0]?.description||"";
+    $("icon").src=iconUrl(cur.weather[0]?.icon||"01d");
+    $("icon").alt=cur.weather[0]?.description||"Weather";
+    $("sunrise").textContent=time(cur.sys.sunrise);
+    $("sunset").textContent=time(cur.sys.sunset);
+    $("updated").textContent=`Updated ${new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`;
+    $("weatherCard").classList.remove("hidden");
+    buildForecast(fc.list);
+    $("forecastCard").classList.remove("hidden");
+    hideMsg();
+    clearInterval(timer); timer=setInterval(loadWeather,15*60*1000);
+  }catch(e){showMsg(e.message,true)}
+}
+function buildForecast(list){
+  const days={};
+  list.forEach(x=>{const k=new Date(x.dt*1000).toLocaleDateString();(days[k]??=[]).push(x)});
+  const out=Object.values(days).slice(0,5).map(items=>{
+    const noon=items.reduce((a,b)=>Math.abs(new Date(b.dt*1000).getHours()-12)<Math.abs(new Date(a.dt*1000).getHours()-12)?b:a);
+    const hi=Math.max(...items.map(x=>x.main.temp_max)),lo=Math.min(...items.map(x=>x.main.temp_min));
+    return `<div class="day"><div class="date">${day(noon.dt)}</div><img src="${iconUrl(noon.weather[0].icon)}"><div>${noon.weather[0].description}</div><strong>${Math.round(hi)}° / ${Math.round(lo)}°</strong></div>`;
+  }).join("");
+  $("forecast").innerHTML=out;
+}
+$("saveBtn").onclick=()=>{coords=null;loadWeather()};
+$("refreshBtn").onclick=loadWeather;
+$("locationBtn").onclick=()=>{
+  if(!navigator.geolocation){showMsg("Location is not supported by this browser.",true);return}
+  navigator.geolocation.getCurrentPosition(p=>{coords={lat:p.coords.latitude,lon:p.coords.longitude};loadWeather()},()=>showMsg("Could not get your location. You can enter a city instead.",true));
+};
+if(savedKey) loadWeather();
+</script>
+</body>
+</html>
